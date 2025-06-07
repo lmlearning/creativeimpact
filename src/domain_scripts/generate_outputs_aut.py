@@ -1,125 +1,138 @@
+import argparse
 import json
 import os
 import sys
-import time
 
-# Ensure src is on path for utils.llm_handler, or run with PYTHONPATH including src
 try:
-    from src.utils import llm_handler # Changed import to absolute from src
+    # Assuming scripts are run from the repository root or src is in PYTHONPATH
+    from src.utils.llm_handler import generate_prompt, get_llm_response
 except ImportError:
-    print("Error: llm_handler from src.utils not found. Make sure src is on PYTHONPATH or script is run as part of a package.")
-    sys.exit(1)
+    # Fallback for direct script execution if src is not in PYTHONPATH
+    # This allows running `python src/domain_scripts/generate_outputs_aut.py ...`
+    # from the repo root.
+    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+    try:
+        from src.utils.llm_handler import generate_prompt, get_llm_response
+    except ImportError:
+        print("Error: llm_handler.py not found. Ensure 'src' is in PYTHONPATH or run from the repository root.")
+        sys.exit(1)
 
-# --- Configuration ---
-DOMAIN = "AUT"
-DATA_FILE = "data/aut_objects.json"
-OUTPUT_FILE = "outputs/outputs_aut.json"
+SUPPORTED_MODELS = ["gpt-4o", "claude-3-5-sonnet-20240620", "deepseek-ai/deepseek-r1"]
 
-# Define models to use - these should match identifiers in llm_handler
-# The 'apple/OpenELM-3B-Instruct' will likely use mock responses in subtasks
-# due to previous environment limitations for transformers.
-MODELS_TO_RUN = [
-    "deepseek-ai/deepseek-r1",
-    "o3",  # OpenAI o3 model
-    "claude-sonnet-3.7", # Anthropic Claude Sonnet 3.7
-    "apple/OpenELM-3B-Instruct"
-]
-
-# API Key Management (Example: Load from environment variables)
-# In a real execution, these would be set in the user's environment.
-# llm_handler.get_llm_response will also check environment variables directly.
-API_KEYS = {
-    "replicate": os.environ.get("REPLICATE_API_TOKEN"),
-    "openai": os.environ.get("OPENAI_API_KEY"),
-    "anthropic": os.environ.get("ANTHROPIC_API_KEY")
-}
-
-# --- Main Script ---
 def main():
-    print(f"Starting output generation for domain: {DOMAIN}")
-    print(f"Loading data from: {DATA_FILE}")
+    parser = argparse.ArgumentParser(description="Generate LLM outputs for AUT (Alternate Uses Task) items.")
+    parser.add_argument(
+        "--model_name",
+        required=True,
+        choices=SUPPORTED_MODELS,
+        help="Name of the LLM to use."
+    )
+    parser.add_argument(
+        "--output_dir",
+        default="outputs/generated_data",
+        help="Directory to save the generated output files."
+    )
+    parser.add_argument(
+        "--data_file",
+        default="data/aut_objects.json",
+        help="Path to the JSON file containing AUT objects (e.g., {'objects': ['pen', 'brick']})."
+    )
+    parser.add_argument(
+        "--max_items",
+        type=int,
+        default=None,
+        help="Maximum number of items to process from the data file (optional)."
+    )
+    args = parser.parse_args()
 
+    # Create output directory if it doesn't exist
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    # Load data
     try:
-        with open(DATA_FILE, 'r') as f:
+        with open(args.data_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        aut_objects = data.get("objects", [])
-        if not aut_objects:
-            print(f"Error: No objects found in {DATA_FILE}")
-            return
+        if "objects" not in data or not isinstance(data["objects"], list):
+            print(f"Error: Data file {args.data_file} must contain a JSON object with an 'objects' key holding a list of strings.")
+            sys.exit(1)
+        items = data['objects']
     except FileNotFoundError:
-        print(f"Error: Data file {DATA_FILE} not found.")
-        return
+        print(f"Error: Data file {args.data_file} not found.")
+        sys.exit(1)
     except json.JSONDecodeError:
-        print(f"Error: Could not decode JSON from {DATA_FILE}.")
+        print(f"Error: Could not decode JSON from {args.data_file}.")
+        sys.exit(1)
+
+    if not items:
+        print("No items found in the data file. Exiting.")
         return
 
-    # Ensure output directory exists
-    os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
+    # Limit items if max_items is set
+    if args.max_items is not None and args.max_items > 0:
+        items_to_process = items[:args.max_items]
+    else:
+        items_to_process = items
 
-    all_outputs = []
-    total_items = len(aut_objects)
-    print(f"Found {total_items} AUT objects to process.")
+    total_items_to_process = len(items_to_process)
+    print(f"Processing {total_items_to_process} AUT items using model: {args.model_name}")
 
-    for item_idx, item_text in enumerate(aut_objects):
-        print(f"\nProcessing item {item_idx + 1}/{total_items}: '{item_text}'")
-        item_id = f"aut_object_{item_idx + 1}" # Simple item ID
+    results = []
+    for index, item_text in enumerate(items_to_process):
+        print(f"Processing item {index + 1} of {total_items_to_process}: '{item_text}'...")
 
-        for model_name in MODELS_TO_RUN:
-            print(f"  Model: {model_name}")
+        try:
+            # Generate plain prompt and get response
+            plain_prompt = generate_prompt(item_text, "AUT", "plain")
+            plain_response = get_llm_response(plain_prompt, args.model_name)
 
-            # Note: The llm_handler.get_llm_response is designed to use mock
-            # responses if API keys are missing or if libraries are not installed (e.g. transformers).
-            # This is especially relevant for 'apple/OpenELM-3B-Instruct' in limited environments.
+            # Generate creative prompt and get response
+            creative_prompt = generate_prompt(item_text, "AUT", "creative")
+            creative_response = get_llm_response(creative_prompt, args.model_name)
 
-            for prompt_type in ["plain", "creative"]:
-                print(f"    Prompt Type: {prompt_type}")
-                try:
-                    prompt = llm_handler.generate_prompt(item_text, DOMAIN, prompt_type)
+            results.append({
+                "item_id": item_text,  # Using the item text itself as a simple ID for AUT
+                "domain": "AUT",
+                "model_name": args.model_name,
+                "original_item": item_text,
+                "plain_prompt": plain_prompt,
+                "plain_response": plain_response,
+                "creative_prompt": creative_prompt,
+                "creative_response": creative_response
+            })
+        except ValueError as ve:
+            print(f"  Skipping item '{item_text}' due to API key/configuration error: {ve}")
+            # Optionally, log this to a separate error file or add a partial result
+            results.append({
+                "item_id": item_text,
+                "domain": "AUT",
+                "model_name": args.model_name,
+                "original_item": item_text,
+                "error": str(ve)
+            })
+        except Exception as e:
+            print(f"  Skipping item '{item_text}' due to an unexpected error: {e}")
+            # Optionally, log this
+            results.append({
+                "item_id": item_text,
+                "domain": "AUT",
+                "model_name": args.model_name,
+                "original_item": item_text,
+                "error": f"Unexpected error: {str(e)}"
+            })
 
-                    # Simulate a small delay to avoid overwhelming APIs if they were live
-                    # and to make the script execution progress more observable.
-                    time.sleep(0.1)
 
-                    response = llm_handler.get_llm_response(prompt, model_name, api_keys=API_KEYS)
+    # Save results
+    # Sanitize model name for filename (e.g., replace "/" with "_")
+    sanitized_model_name = args.model_name.replace("/", "_")
+    output_filename = f"generated_aut_{sanitized_model_name}.json"
+    output_filepath = os.path.join(args.output_dir, output_filename)
 
-                    output_record = {
-                        "item_id": item_id,
-                        "object": item_text,
-                        "model_name": model_name,
-                        "prompt_type": prompt_type,
-                        "prompt": prompt,
-                        "response": response
-                    }
-                    all_outputs.append(output_record)
-                    print(f"      -> Response (mocked/actual): {response[:100]}...") # Print snippet
-                except Exception as e:
-                    print(f"Error processing {item_text} with {model_name} ({prompt_type}): {e}")
-                    # Optionally add an error record
-                    error_record = {
-                        "item_id": item_id,
-                        "object": item_text,
-                        "model_name": model_name,
-                        "prompt_type": prompt_type,
-                        "prompt": llm_handler.generate_prompt(item_text, DOMAIN, prompt_type) if 'prompt' not in locals() else prompt,
-                        "response": f"ERROR: {str(e)}"
-                    }
-                    all_outputs.append(error_record)
-
-    print(f"\nSaving all outputs to {OUTPUT_FILE}...")
     try:
-        with open(OUTPUT_FILE, 'w') as f:
-            json.dump(all_outputs, f, indent=4)
-        print(f"Successfully saved outputs for {DOMAIN} to {OUTPUT_FILE}")
-    except IOError:
-        print(f"Error: Could not write to {OUTPUT_FILE}.")
+        with open(output_filepath, 'w', encoding='utf-8') as f:
+            json.dump(results, f, indent=4, ensure_ascii=False)
+        print(f"\nSuccessfully generated outputs to {output_filepath}")
+    except IOError as e:
+        print(f"Error: Could not write results to {output_filepath}. Error: {e}")
 
 if __name__ == "__main__":
-    # This check is important if llm_handler itself tries to use API keys upon import,
-    # which it currently doesn't in its global scope.
-    print("Checking for API keys (will use mocks if not found):")
-    if not API_KEYS["replicate"]: print("  REPLICATE_API_TOKEN not set.")
-    if not API_KEYS["openai"]: print("  OPENAI_API_KEY not set.")
-    if not API_KEYS["anthropic"]: print("  ANTHROPIC_API_KEY not set.")
-    print("Note: apple/OpenELM-3B-Instruct will use mock if transformers not fully installed.\n")
-
     main()

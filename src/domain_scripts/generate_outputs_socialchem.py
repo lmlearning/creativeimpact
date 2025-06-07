@@ -1,141 +1,134 @@
+import argparse
 import json
 import os
 import sys
-import time
-import pandas as pd # For CSV/TSV handling
 
-# Add src/utils to Python path to import llm_handler
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'utils'))) # Adjusted path for src.utils
 try:
-    from src.utils import llm_handler # Assuming __init__.py in src and src/utils
-except ImportError as e:
-    print(f"Error importing llm_handler: {e}")
-    print("Make sure llm_handler.py is in src/utils/ and src/utils contains __init__.py")
-    print("Also ensure src contains __init__.py to be treated as a package.")
-    sys.exit(1)
-
-# --- Configuration ---
-DOMAIN = "SocialChem"
-DATA_FILE = "data/socialchem/socialchem_sampled_30.jsonl"
-OUTPUT_FILE = "outputs/outputs_{domain_lc}.json" # domain_lc will be lowercase domain name
-
-MODELS_TO_RUN = [
-    "deepseek-ai/deepseek-r1",
-    "o3",
-    "claude-sonnet-3.7",
-    "apple/OpenELM-3B-Instruct"
-]
-
-API_KEYS = {
-    "replicate": os.environ.get("REPLICATE_API_TOKEN"),
-    "openai": os.environ.get("OPENAI_API_KEY"),
-    "anthropic": os.environ.get("ANTHROPIC_API_KEY")
-}
-
-# --- Data Loading Function ---
-def load_data(file_path):
-    if file_path.endswith(".json"):
-        with open(file_path, 'r') as f:
-            data = json.load(f)
-            return [{"id": f"{DOMAIN.lower()}_{i+1}", "text": obj} for i, obj in enumerate(data.get("objects", []))]
-    elif file_path.endswith(".jsonl"): # SocialChem data is .jsonl
-        items = []
-        with open(file_path, 'r') as f:
-            for i, line in enumerate(f):
-                record = json.loads(line)
-                # GSM8K: {"question": "...", "answer": "..."} -> text is question
-                # SocialChem: {"situation_id": "...", "situation": "...", "rot": "..."} -> text is situation
-                item_text = record.get("question") or record.get("situation")
-                # Use situation_id if present, else generate one.
-                item_id = record.get("situation_id") or record.get("id") or f"{DOMAIN.lower()}_{i+1}"
-                if item_text:
-                    items.append({"id": item_id, "text": item_text, "full_record": record})
-        return items
-    elif file_path.endswith(".csv") or file_path.endswith(".tsv"):
-        sep = '\t' if file_path.endswith(".tsv") else ','
-        df = pd.read_csv(file_path, sep=sep)
-        items = []
-        for i, row in df.iterrows():
-            question_text = row.get("Question") or row.get("question")
-            if question_text:
-                items.append({"id": f"{DOMAIN.lower()}_q{i+1}", "text": question_text, "full_record": row.to_dict()})
-        return items
-    else:
-        raise ValueError(f"Unsupported data file format: {file_path}")
-
-# --- Main Script ---
-def main():
-    print(f"Starting output generation for domain: {DOMAIN}")
-    print(f"Loading data from: {DATA_FILE}")
-
-    output_file_name = OUTPUT_FILE.format(domain_lc=DOMAIN.lower())
-    os.makedirs(os.path.dirname(output_file_name), exist_ok=True)
-
+    # Assuming scripts are run from the repository root or src is in PYTHONPATH
+    from src.utils.llm_handler import generate_prompt, get_llm_response
+except ImportError:
+    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
     try:
-        dataset_items = load_data(DATA_FILE)
-        if not dataset_items:
-            print(f"Error: No items found or loaded from {DATA_FILE}")
-            return
-    except Exception as e:
-        print(f"Error loading data from {DATA_FILE}: {e}")
+        from src.utils.llm_handler import generate_prompt, get_llm_response
+    except ImportError:
+        print("Error: llm_handler.py not found. Ensure 'src' is in PYTHONPATH or run from the repository root.")
+        sys.exit(1)
+
+SUPPORTED_MODELS = ["gpt-4o", "claude-3-5-sonnet-20240620", "deepseek-ai/deepseek-r1"]
+DOMAIN_NAME = "SocialChem"
+
+def main():
+    parser = argparse.ArgumentParser(description=f"Generate LLM outputs for {DOMAIN_NAME} items.")
+    parser.add_argument(
+        "--model_name",
+        required=True,
+        choices=SUPPORTED_MODELS,
+        help="Name of the LLM to use."
+    )
+    parser.add_argument(
+        "--output_dir",
+        default="outputs/generated_data",
+        help="Directory to save the generated output files."
+    )
+    parser.add_argument(
+        "--data_file",
+        default="data/socialchem/socialchem_sampled_30.jsonl",
+        help=f"Path to the JSONL file containing {DOMAIN_NAME} data."
+    )
+    parser.add_argument(
+        "--max_items",
+        type=int,
+        default=None,
+        help="Maximum number of items to process from the data file (optional)."
+    )
+    args = parser.parse_args()
+
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    items = []
+    try:
+        with open(args.data_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                items.append(json.loads(line))
+    except FileNotFoundError:
+        print(f"Error: Data file {args.data_file} not found.")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"Error: Could not decode JSON from a line in {args.data_file}. Error: {e}")
+        sys.exit(1)
+
+    if not items:
+        print("No items found in the data file. Exiting.")
         return
 
-    all_outputs = []
-    # --- Process only a subset for testing in environment ---
-    # SocialChem has 30 items, so processing all is fine / quick.
-    dataset_items_subset = dataset_items[:5] # Process first 5 items for consistency and speed
-    total_items_to_process = len(dataset_items_subset)
-    print(f"Found {len(dataset_items)} total items. Processing subset of {total_items_to_process} for {DOMAIN}.")
+    items_to_process = items[:args.max_items] if args.max_items is not None and args.max_items > 0 else items
+    total_items_to_process = len(items_to_process)
+    print(f"Processing {total_items_to_process} {DOMAIN_NAME} items using model: {args.model_name}")
 
+    results = []
+    for index, item in enumerate(items_to_process):
+        item_id = f"{DOMAIN_NAME.lower()}_item_{index}" # Default item_id
+        # SocialChem uses 'question' based on the provided `socialchem_sampled_30.jsonl`
+        if 'question' not in item:
+            print(f"  Skipping item index {index} due to missing 'question' field: {item}")
+            results.append({
+                "item_id": item_id,
+                "domain": DOMAIN_NAME,
+                "model_name": args.model_name,
+                "original_item_dict": item,
+                "error": "Missing 'question' field in original item."
+            })
+            continue
 
-    for item_idx, item_data in enumerate(dataset_items_subset): # Use subset
-        item_text = item_data["text"]
-        item_id = item_data["id"]
-        print(f"\nProcessing item {item_idx + 1}/{total_items_to_process}: ID '{item_id}'")
+        item_text = item['question']
+        print(f"Processing item {index + 1} of {total_items_to_process}: (ID: {item_id}) '{item_text[:100]}...'")
 
-        for model_name in MODELS_TO_RUN:
-            print(f"  Model: {model_name}")
-            for prompt_type in ["plain", "creative"]:
-                print(f"    Prompt Type: {prompt_type}")
-                try:
-                    prompt = llm_handler.generate_prompt(item_text, DOMAIN, prompt_type)
-                    time.sleep(0.1)
-                    response = llm_handler.get_llm_response(prompt, model_name, api_keys=API_KEYS)
+        try:
+            plain_prompt = generate_prompt(item_text, DOMAIN_NAME, "plain")
+            plain_response = get_llm_response(plain_prompt, args.model_name)
 
-                    output_record = {
-                        "item_id": item_id,
-                        "domain_specific_data": item_data.get("full_record", {DOMAIN.lower()+"_text": item_text}),
-                        "model_name": model_name,
-                        "prompt_type": prompt_type,
-                        "prompt": prompt,
-                        "response": response
-                    }
-                    all_outputs.append(output_record)
-                    # Reduced verbosity
-                except Exception as e:
-                    print(f"Error processing item ID {item_id} with {model_name} ({prompt_type}): {e}")
-                    error_record = {
-                        "item_id": item_id,
-                        "domain_specific_data": item_data.get("full_record", {DOMAIN.lower()+"_text": item_text}),
-                        "model_name": model_name,
-                        "prompt_type": prompt_type,
-                        "prompt": llm_handler.generate_prompt(item_text, DOMAIN, prompt_type) if 'prompt' not in locals() else prompt,
-                        "response": f"ERROR: {str(e)}"
-                    }
-                    all_outputs.append(error_record)
+            creative_prompt = generate_prompt(item_text, DOMAIN_NAME, "creative")
+            creative_response = get_llm_response(creative_prompt, args.model_name)
 
-    print(f"\nSaving all outputs to {output_file_name}...")
+            results.append({
+                "item_id": item_id,
+                "domain": DOMAIN_NAME,
+                "model_name": args.model_name,
+                "original_item_dict": item,
+                "plain_prompt": plain_prompt,
+                "plain_response": plain_response,
+                "creative_prompt": creative_prompt,
+                "creative_response": creative_response
+            })
+        except ValueError as ve:
+            print(f"  Skipping item ID '{item_id}' due to API key/configuration error: {ve}")
+            results.append({
+                "item_id": item_id,
+                "domain": DOMAIN_NAME,
+                "model_name": args.model_name,
+                "original_item_dict": item,
+                "error": str(ve)
+            })
+        except Exception as e:
+            print(f"  Skipping item ID '{item_id}' due to an unexpected error: {e}")
+            results.append({
+                "item_id": item_id,
+                "domain": DOMAIN_NAME,
+                "model_name": args.model_name,
+                "original_item_dict": item,
+                "error": f"Unexpected error: {str(e)}"
+            })
+
+    sanitized_model_name = args.model_name.replace("/", "_")
+    output_filename = f"generated_{DOMAIN_NAME.lower()}_{sanitized_model_name}.json"
+    output_filepath = os.path.join(args.output_dir, output_filename)
+
     try:
-        with open(output_file_name, 'w') as f:
-            json.dump(all_outputs, f, indent=4)
-        print(f"Successfully saved outputs for {DOMAIN} to {output_file_name}")
-    except IOError:
-        print(f"Error: Could not write to {output_file_name}.")
+        with open(output_filepath, 'w', encoding='utf-8') as f:
+            json.dump(results, f, indent=4, ensure_ascii=False)
+        print(f"\nSuccessfully generated outputs for {DOMAIN_NAME} to {output_filepath}")
+    except IOError as e:
+        print(f"Error: Could not write results to {output_filepath}. Error: {e}")
 
 if __name__ == "__main__":
-    print(f"Environment check for {DOMAIN} script:")
-    if not API_KEYS["replicate"]: print("  REPLICATE_API_TOKEN not set.")
-    if not API_KEYS["openai"]: print("  OPENAI_API_KEY not set.")
-    if not API_KEYS["anthropic"]: print("  ANTHROPIC_API_KEY not set.")
-    print("  Note: apple/OpenELM-3B-Instruct will use mock if transformers not fully installed.\n")
     main()

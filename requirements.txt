@@ -1,8 +1,10 @@
 replicate
 anthropic
+datasets
 requests
 pandas
 numpy
+scipy
 scikit-learn
 nltk
 sentence-transformers

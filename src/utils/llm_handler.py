@@ -15,12 +15,12 @@ except ImportError:
     print("DEBUG: Failed to import 'Anthropic' in llm_handler.py")
     Anthropic = None
 try:
-    from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline # Added for Hugging Face local inference
+    from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline # Kept for potential future use or indirect dependencies
 except ImportError:
     print("DEBUG: Failed to import from 'transformers' in llm_handler.py")
     AutoTokenizer, AutoModelForCausalLM, pipeline = None, None, None
 try:
-    import torch # Added for Hugging Face local inference
+    import torch # Kept for potential future use or indirect dependencies
 except (ImportError, OSError) as e: # Catch OSError as well
     print(f"DEBUG: Failed to import 'torch' in llm_handler.py: {e}")
     torch = None
@@ -71,73 +71,39 @@ def get_llm_response(prompt: str, model_name: str, api_keys: dict = None):
 
     if model_name == "deepseek-ai/deepseek-r1":
         print(f"Using Replicate for {model_name}")
+        # The replicate client automatically uses REPLICATE_API_TOKEN env var.
+        # No need to check api_keys dict for 'replicate' as per standard usage.
+        if "REPLICATE_API_TOKEN" not in os.environ:
+            raise ValueError("REPLICATE_API_TOKEN environment variable not found. Please set it to use DeepSeek R1.")
+
         try:
-            # The replicate client automatically uses REPLICATE_API_TOKEN env var.
-            # If api_keys['replicate'] is provided, it could be used to set it temporarily,
-            # but standard practice is to rely on the environment variable.
-            if "REPLICATE_API_TOKEN" not in os.environ and not api_keys.get("replicate"):
-                print("Warning: REPLICATE_API_TOKEN not found in environment or api_keys.")
-                print("Returning mock response for DeepSeek R1 as API key is missing.")
-                return f"Mock response (API key missing) for DeepSeek R1: {prompt}"
-
-            # If an API key is explicitly passed, set it for this call
-            # This is useful if the subtask environment doesn't persist env variables easily
-            current_env_token = os.environ.get("REPLICATE_API_TOKEN")
-            if api_keys.get("replicate"):
-                os.environ["REPLICATE_API_TOKEN"] = api_keys["replicate"]
-
-            # It's good practice to ensure the client is initialized here if not globally
-            # For this subtask, direct call is fine.
-
-            # The model expects a dictionary input, typically with a 'prompt' key or similar.
-            # Checking the specific model's expected input format on Replicate is important.
-            # For deepseek-r1, it's likely a standard prompt input.
-            # Let's assume it takes input like: {"prompt": "..."}
+            # The model expects a dictionary input. For deepseek-r1, it's typically {"prompt": prompt}
             # The output is often an iterator of strings.
             input_payload = {"prompt": prompt}
-
-            # Replace with actual model version if needed, e.g. by finding the latest deployment
-            # For now, using the model name directly which Replicate usually resolves.
             output_iterator = replicate.run(
-                model_name,
+                model_name, # e.g. "deepseek-ai/deepseek-r1"
                 input=input_payload
             )
-
             response_parts = [str(part) for part in output_iterator]
             full_response = "".join(response_parts)
-
-            # Restore original env token if it was changed
-            if api_keys.get("replicate") and current_env_token:
-                os.environ["REPLICATE_API_TOKEN"] = current_env_token
-            elif api_keys.get("replicate") and not current_env_token: # was set, but no original
-                 del os.environ["REPLICATE_API_TOKEN"]
-
-
             return full_response.strip()
-
         except replicate.exceptions.ReplicateError as e:
-            print(f"Replicate API error for {model_name}: {e}")
-            # Fallback to mock response or re-raise depending on desired error handling
-            return f"Mock response (Replicate API Error: {e}) for DeepSeek R1: {prompt}"
+            # More specific error handling can be added if needed
+            raise ValueError(f"Replicate API error for {model_name}: {e}") from e
         except Exception as e:
-            print(f"An unexpected error occurred with Replicate model {model_name}: {e}")
-            # Fallback to mock response
-            return f"Mock response (Unexpected Error: {e}) for DeepSeek R1: {prompt}"
+            # Catch any other unexpected errors during the Replicate call
+            raise ValueError(f"An unexpected error occurred with Replicate model {model_name}: {e}") from e
 
-    elif model_name == "o3": # User specified this for OpenAI
+    elif model_name == "gpt-4o": # Changed from "o3"
         print(f"Using OpenAI API for {model_name}")
+        api_key = api_keys.get("openai") or os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY environment variable not found. Please set it to use an OpenAI model like gpt-4o.")
+
         try:
-            api_key = api_keys.get("openai") or os.environ.get("OPENAI_API_KEY")
-            if not api_key:
-                print("Warning: OPENAI_API_KEY not found in environment or api_keys.")
-                print(f"Returning mock response for {model_name} as API key is missing.")
-                return f"Mock response (API key missing) for {model_name}: {prompt}"
-
             client = OpenAI(api_key=api_key)
-
-            # Using the ChatCompletions endpoint as it's standard
             chat_completion = client.chat.completions.create(
-                model=model_name,  # "o3"
+                model="gpt-4o",  # Explicitly use "gpt-4o"
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
@@ -145,67 +111,19 @@ def get_llm_response(prompt: str, model_name: str, api_keys: dict = None):
             )
             response_text = chat_completion.choices[0].message.content
             return response_text.strip()
+        except Exception as e: # Catching a broad exception from the OpenAI client
+            raise ValueError(f"OpenAI API error for {model_name}: {e}") from e
 
-        except Exception as e: # Catching a broad exception for now
-            print(f"OpenAI API error for {model_name}: {e}")
-            return f"Mock response (OpenAI API Error: {e}) for {model_name}: {prompt}"
-
-    elif model_name == "apple/OpenELM-3B-Instruct":
-        print(f"Using Hugging Face Transformers for {model_name}")
-        try:
-            # Try to use GPU if available, otherwise CPU
-            device = 0 if torch.cuda.is_available() else -1
-            print(f"HF device: {'cuda:0' if device == 0 else 'cpu'}")
-
-            # Load tokenizer and model
-            # Using trust_remote_code=True as some models (like OpenELM) require it.
-            tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-
-            model_obj = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True)
-            if device == 0: # GPU
-                model_obj = model_obj.to("cuda")
-            else: # CPU
-                model_obj = model_obj.to("cpu")
-
-            inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024) # Max input length
-
-            if device == 0:
-                inputs = {k: v.to("cuda") for k, v in inputs.items()}
-            else:
-                inputs = {k: v.to("cpu") for k, v in inputs.items()}
-
-            # Generate text
-            output_sequences = model_obj.generate(**inputs, max_new_tokens=512, pad_token_id=tokenizer.eos_token_id)
-
-            response_text = tokenizer.decode(output_sequences[0], skip_special_tokens=True)
-
-            # The response usually includes the prompt, so we might want to remove it.
-            if response_text.startswith(prompt):
-                response_text = response_text[len(prompt):]
-
-            return response_text.strip()
-
-        except ImportError:
-            print("Error: Hugging Face Transformers or PyTorch not installed correctly.")
-            return f"Mock response (HF/Torch Import Error) for {model_name}: {prompt}"
-        except Exception as e:
-            print(f"Hugging Face model error for {model_name}: {e}")
-            return f"Mock response (HF Model Error: {e}) for {model_name}: {prompt}"
-
-    elif model_name == "claude-sonnet-3.7":
+    elif model_name == "claude-3-5-sonnet-20240620": # Changed from "claude-sonnet-3.7"
         print(f"Using Anthropic API for {model_name}")
+        api_key = api_keys.get("anthropic") or os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise ValueError("ANTHROPIC_API_KEY environment variable not found. Please set it to use an Anthropic model like claude-3-5-sonnet-20240620.")
+
         try:
-            # Anthropic client uses ANTHROPIC_API_KEY env var by default
-            api_key = api_keys.get("anthropic") or os.environ.get("ANTHROPIC_API_KEY")
-            if not api_key:
-                print("Warning: ANTHROPIC_API_KEY not found in environment or api_keys.")
-                print(f"Returning mock response for {model_name} as API key is missing.")
-                return f"Mock response (API key missing) for {model_name}: {prompt}"
-
             client = Anthropic(api_key=api_key)
-
             message = client.messages.create(
-                model=model_name, # Directly use the model_name passed, e.g. "claude-sonnet-3.7"
+                model="claude-3-5-sonnet-20240620", # Explicitly use "claude-3-5-sonnet-20240620"
                 max_tokens=1024,  # Adjust as needed
                 messages=[
                     {"role": "user", "content": prompt}
@@ -213,10 +131,8 @@ def get_llm_response(prompt: str, model_name: str, api_keys: dict = None):
             )
             response_text = message.content[0].text
             return response_text.strip()
-
-        except Exception as e: # Catching a broad exception
-            print(f"Anthropic API error for {model_name}: {e}")
-            return f"Mock response (Anthropic API Error: {e}) for {model_name}: {prompt}"
+        except Exception as e: # Catching a broad exception from the Anthropic client
+            raise ValueError(f"Anthropic API error for {model_name}: {e}") from e
 
     else:
         raise ValueError(f"Unknown or unsupported model_name: {model_name}")
@@ -239,14 +155,30 @@ if __name__ == '__main__':
     print(f"SocialChem Plain: {generate_prompt(sc_situation, 'SocialChem', 'plain')}")
     print(f"SocialChem Creative: {generate_prompt(sc_situation, 'SocialChem', 'creative')}")
 
-    print("\n--- Testing get_llm_response (Replicate potentially live if API key is set) ---")
+    print("\n--- Testing get_llm_response ---")
     test_prompt_aut_creative = generate_prompt(aut_obj, 'AUT', 'creative')
 
-    # To test Replicate, an API key must be set as REPLICATE_API_TOKEN environment variable
-    # in the execution environment of this subtask.
-    # If the key is not set, it will print a warning and return a mock response.
-    print(f"DeepSeek R1: {get_llm_response(test_prompt_aut_creative, 'deepseek-ai/deepseek-r1')}")
+    # Test DeepSeek R1
+    try:
+        print(f"DeepSeek R1: {get_llm_response(test_prompt_aut_creative, 'deepseek-ai/deepseek-r1')}")
+    except ValueError as e:
+        print(f"Error testing DeepSeek R1: {e}")
+    except Exception as e:
+        print(f"Unexpected error testing DeepSeek R1: {e}")
 
-    print(f"OpenAI o3 (mocked): {get_llm_response(test_prompt_aut_creative, 'o3')}")
-    print(f"OpenELM (mocked): {get_llm_response(test_prompt_aut_creative, 'apple/OpenELM-3B-Instruct')}")
-    print(f"Claude Sonnet 3.7 (mocked): {get_llm_response(test_prompt_aut_creative, 'claude-sonnet-3.7')}")
+
+    # Test OpenAI gpt-4o
+    try:
+        print(f"OpenAI gpt-4o: {get_llm_response(test_prompt_aut_creative, 'gpt-4o')}")
+    except ValueError as e:
+        print(f"Error testing OpenAI gpt-4o: {e}")
+    except Exception as e:
+        print(f"Unexpected error testing OpenAI gpt-4o: {e}")
+
+    # Test Anthropic claude-3-5-sonnet-20240620
+    try:
+        print(f"Anthropic claude-3-5-sonnet-20240620: {get_llm_response(test_prompt_aut_creative, 'claude-3-5-sonnet-20240620')}")
+    except ValueError as e:
+        print(f"Error testing Anthropic claude-3-5-sonnet-20240620: {e}")
+    except Exception as e:
+        print(f"Unexpected error testing Anthropic claude-3-5-sonnet-20240620: {e}")
