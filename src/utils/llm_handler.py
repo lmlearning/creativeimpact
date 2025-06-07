@@ -69,7 +69,7 @@ def get_llm_response(prompt: str, model_name: str, api_keys: dict = None):
     if api_keys is None:
         api_keys = {}
 
-    if model_name == "deepseek-ai/deepseek-r1":
+    if model_name == "deepseek r1": # Changed to "deepseek r1"
         print(f"Using Replicate for {model_name}")
         # The replicate client automatically uses REPLICATE_API_TOKEN env var.
         # No need to check api_keys dict for 'replicate' as per standard usage.
@@ -81,7 +81,7 @@ def get_llm_response(prompt: str, model_name: str, api_keys: dict = None):
             # The output is often an iterator of strings.
             input_payload = {"prompt": prompt}
             output_iterator = replicate.run(
-                model_name, # e.g. "deepseek-ai/deepseek-r1"
+                "deepseek-ai/deepseek-r1", # Actual model identifier for Replicate
                 input=input_payload
             )
             response_parts = [str(part) for part in output_iterator]
@@ -89,21 +89,21 @@ def get_llm_response(prompt: str, model_name: str, api_keys: dict = None):
             return full_response.strip()
         except replicate.exceptions.ReplicateError as e:
             # More specific error handling can be added if needed
-            raise ValueError(f"Replicate API error for {model_name}: {e}") from e
+            raise ValueError(f"Replicate API error for deepseek-ai/deepseek-r1: {e}") from e
         except Exception as e:
             # Catch any other unexpected errors during the Replicate call
-            raise ValueError(f"An unexpected error occurred with Replicate model {model_name}: {e}") from e
+            raise ValueError(f"An unexpected error occurred with Replicate model deepseek-ai/deepseek-r1: {e}") from e
 
-    elif model_name == "gpt-4o": # Changed from "o3"
+    elif model_name == "o3": # Changed to "o3"
         print(f"Using OpenAI API for {model_name}")
         api_key = api_keys.get("openai") or os.environ.get("OPENAI_API_KEY")
         if not api_key:
-            raise ValueError("OPENAI_API_KEY environment variable not found. Please set it to use an OpenAI model like gpt-4o.")
+            raise ValueError("OPENAI_API_KEY environment variable not found. Please set it to use an OpenAI model like o3 (gpt-4o).")
 
         try:
             client = OpenAI(api_key=api_key)
             chat_completion = client.chat.completions.create(
-                model="gpt-4o",  # Explicitly use "gpt-4o"
+                model="gpt-4o",  # Actual model identifier for OpenAI
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
@@ -112,18 +112,18 @@ def get_llm_response(prompt: str, model_name: str, api_keys: dict = None):
             response_text = chat_completion.choices[0].message.content
             return response_text.strip()
         except Exception as e: # Catching a broad exception from the OpenAI client
-            raise ValueError(f"OpenAI API error for {model_name}: {e}") from e
+            raise ValueError(f"OpenAI API error for gpt-4o: {e}") from e
 
-    elif model_name == "claude-3-5-sonnet-20240620": # Changed from "claude-sonnet-3.7"
+    elif model_name == "claude 3.7": # Changed to "claude 3.7"
         print(f"Using Anthropic API for {model_name}")
         api_key = api_keys.get("anthropic") or os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY environment variable not found. Please set it to use an Anthropic model like claude-3-5-sonnet-20240620.")
+            raise ValueError("ANTHROPIC_API_KEY environment variable not found. Please set it to use an Anthropic model like claude 3.7 (claude-3-5-sonnet-20240620).")
 
         try:
             client = Anthropic(api_key=api_key)
             message = client.messages.create(
-                model="claude-3-5-sonnet-20240620", # Explicitly use "claude-3-5-sonnet-20240620"
+                model="claude-3-5-sonnet-20240620", # Actual model identifier for Anthropic
                 max_tokens=1024,  # Adjust as needed
                 messages=[
                     {"role": "user", "content": prompt}
@@ -132,7 +132,7 @@ def get_llm_response(prompt: str, model_name: str, api_keys: dict = None):
             response_text = message.content[0].text
             return response_text.strip()
         except Exception as e: # Catching a broad exception from the Anthropic client
-            raise ValueError(f"Anthropic API error for {model_name}: {e}") from e
+            raise ValueError(f"Anthropic API error for claude-3-5-sonnet-20240620: {e}") from e
 
     else:
         raise ValueError(f"Unknown or unsupported model_name: {model_name}")
@@ -160,25 +160,25 @@ if __name__ == '__main__':
 
     # Test DeepSeek R1
     try:
-        print(f"DeepSeek R1: {get_llm_response(test_prompt_aut_creative, 'deepseek-ai/deepseek-r1')}")
+        print(f"DeepSeek R1: {get_llm_response(test_prompt_aut_creative, 'deepseek r1')}") # Changed to "deepseek r1"
     except ValueError as e:
         print(f"Error testing DeepSeek R1: {e}")
     except Exception as e:
         print(f"Unexpected error testing DeepSeek R1: {e}")
 
 
-    # Test OpenAI gpt-4o
+    # Test OpenAI o3
     try:
-        print(f"OpenAI gpt-4o: {get_llm_response(test_prompt_aut_creative, 'gpt-4o')}")
+        print(f"OpenAI o3: {get_llm_response(test_prompt_aut_creative, 'o3')}") # Changed to "o3"
     except ValueError as e:
-        print(f"Error testing OpenAI gpt-4o: {e}")
+        print(f"Error testing OpenAI o3: {e}")
     except Exception as e:
-        print(f"Unexpected error testing OpenAI gpt-4o: {e}")
+        print(f"Unexpected error testing OpenAI o3: {e}")
 
-    # Test Anthropic claude-3-5-sonnet-20240620
+    # Test Anthropic claude 3.7
     try:
-        print(f"Anthropic claude-3-5-sonnet-20240620: {get_llm_response(test_prompt_aut_creative, 'claude-3-5-sonnet-20240620')}")
+        print(f"Anthropic claude 3.7: {get_llm_response(test_prompt_aut_creative, 'claude 3.7')}") # Changed to "claude 3.7"
     except ValueError as e:
-        print(f"Error testing Anthropic claude-3-5-sonnet-20240620: {e}")
+        print(f"Error testing Anthropic claude 3.7: {e}")
     except Exception as e:
-        print(f"Unexpected error testing Anthropic claude-3-5-sonnet-20240620: {e}")
+        print(f"Unexpected error testing Anthropic claude 3.7: {e}")
