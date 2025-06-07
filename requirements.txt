@@ -1,0 +1,12 @@
+replicate
+anthropic
+requests
+pandas
+numpy
+scikit-learn
+nltk
+sentence-transformers
+transformers
+accelerate
+torch
+openai
