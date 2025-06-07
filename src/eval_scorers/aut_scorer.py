@@ -3,10 +3,47 @@ import json
 import csv
 import random
 import os
+import numpy as np # For averaging
 
 # Ensure the directory exists (though create_file_with_block should handle it)
 # For robustness if this script were moved or run in a different context.
 # os.makedirs(os.path.dirname(__file__), exist_ok=True)
+
+# Part 1: Originality Scoring
+def score_aut_originality(generated_idea: str, common_ideas: list[str]) -> float:
+    """
+    Scores a single generated idea for originality based on a list of common ideas.
+    Placeholder logic: 0.9 if not in common_ideas (case-insensitive), 0.2 otherwise.
+    """
+    generated_idea_lower = generated_idea.lower()
+    common_ideas_lower = [idea.lower() for idea in common_ideas]
+    if generated_idea_lower not in common_ideas_lower:
+        return 0.9  # More novel
+    else:
+        return 0.2  # Less novel
+
+# Part 2: Fluency Scoring
+def score_aut_fluency(generated_ideas: list[str]) -> int:
+    """
+    Scores fluency by counting the number of distinct generated ideas.
+    Assumes each string in the list is a distinct idea.
+    """
+    return len(generated_ideas)
+
+# Part 3: Main Scorer Function
+def calculate_aut_scores(generated_ideas: list[str], common_ideas: list[str]) -> tuple[float, int]:
+    """
+    Calculates average originality and fluency for a list of generated ideas.
+    """
+    if not generated_ideas:
+        return 0.0, 0
+
+    originality_scores = [score_aut_originality(idea, common_ideas) for idea in generated_ideas]
+    average_originality = np.mean(originality_scores) if originality_scores else 0.0
+
+    fluency_score = score_aut_fluency(generated_ideas)
+
+    return float(average_originality), fluency_score
 
 def main():
     parser = argparse.ArgumentParser(description="Score AUT outputs and generate a CSV.")
@@ -37,7 +74,7 @@ def main():
         print(f"Error: Could not decode JSON from {args.input_file}.")
         return
 
-    csv_header = ["item_id", "plain_fluency", "creative_fluency", "plain_originality", "creative_originality"]
+    csv_header = ["item_id", "plain_fluency", "creative_fluency", "plain_avg_originality", "creative_avg_originality"]
 
     with open(args.output_file, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
@@ -50,21 +87,73 @@ def main():
                 writer.writerow([item_id, "ERROR", "ERROR", "ERROR", "ERROR"])
                 continue
 
-            # Dummy scoring logic
-            plain_fluency = random.randint(1, 5)
-            creative_fluency = random.randint(1, 5)
-            plain_originality = round(random.uniform(0.0, 2.0), 2)
-            creative_originality = round(random.uniform(0.0, 2.0), 2)
+            # Assumed keys from the input JSON structure
+            # These might need to be adjusted based on actual `generate_outputs_aut.py` output
+            plain_ideas = item.get("plain_responses", [])
+            creative_ideas = item.get("creative_responses", [])
+            # Assuming 'common_ideas' is a key in each item, specific to that item_id's object
+            # If common_ideas is global for all items, this needs adjustment.
+            common_ideas_for_item = item.get("common_ideas_for_item", [])
+            if not common_ideas_for_item:
+                 # Fallback or global common ideas if not per item - for now, just use a default list for safety in test
+                print(f"Warning: No 'common_ideas_for_item' found for item {item_id}. Using a default empty list.")
+
+
+            plain_avg_originality, plain_fluency = calculate_aut_scores(plain_ideas, common_ideas_for_item)
+            creative_avg_originality, creative_fluency = calculate_aut_scores(creative_ideas, common_ideas_for_item)
 
             writer.writerow([
                 item_id,
                 plain_fluency,
                 creative_fluency,
-                plain_originality,
-                creative_originality
+                f"{plain_avg_originality:.4f}",
+                f"{creative_avg_originality:.4f}"
             ])
 
     print(f"Successfully generated AUT scores to {args.output_file}")
 
+def run_aut_scorer_test():
+    print("\n--- Running AUT Scorer Test ---")
+    sample_object = "brick"
+    sample_generated_ideas = [
+        "build a house",
+        "use as a paperweight",
+        "throw it through a window",
+        "use as a doorstop",
+        "grind it into powder for pigment"
+    ]
+    sample_common_ideas = [
+        "build a wall",
+        "use as a paperweight",
+        "build a house", # common
+        "use as a weapon" # common
+    ]
+
+    print(f"Object: {sample_object}")
+    print(f"Generated Ideas: {sample_generated_ideas}")
+    print(f"Common Ideas: {sample_common_ideas}")
+
+    avg_originality, fluency = calculate_aut_scores(sample_generated_ideas, sample_common_ideas)
+
+    print(f"\nCalculated Fluency: {fluency}")
+    print(f"Calculated Average Originality: {avg_originality:.4f}")
+
+    # Test with empty generated ideas
+    avg_originality_empty, fluency_empty = calculate_aut_scores([], sample_common_ideas)
+    print(f"\nCalculated Fluency (empty generated): {fluency_empty}")
+    print(f"Calculated Average Originality (empty generated): {avg_originality_empty:.4f}")
+
+    # Test with empty common ideas (all generated should be novel)
+    avg_originality_no_common, fluency_no_common = calculate_aut_scores(sample_generated_ideas, [])
+    print(f"\nCalculated Fluency (empty common): {fluency_no_common}")
+    print(f"Calculated Average Originality (empty common): {avg_originality_no_common:.4f}")
+    print("--- AUT Scorer Test Finished ---")
+
+
 if __name__ == '__main__':
+    # When invoked as a script, run the main logic.
+    # The run_aut_scorer_test() is useful for direct testing of functions.
     main()
+    # To run local tests for the functions:
+    # print("--- Running local tests for aut_scorer functions (call run_aut_scorer_test() directly if needed) ---")
+    # run_aut_scorer_test()

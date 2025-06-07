@@ -3,7 +3,72 @@ import json
 import csv
 import random
 import os
+import re # For number extraction
 
+# --- Exact Match Scoring Function ---
+def normalize_answer(answer: str) -> str:
+    """Normalize the answer string by removing common units, symbols, and whitespace."""
+    if answer is None:
+        return ""
+
+    # Remove common units and symbols (e.g., $, %, cm, kg)
+    # This list can be expanded. For GSM8K, usually, we are looking for a number.
+    answer = re.sub(r"[\$,%]", "", str(answer))
+    # Remove commas used as thousands separators
+    answer = answer.replace(",", "")
+    # Remove leading/trailing whitespace
+    answer = answer.strip()
+    return answer
+
+def extract_final_answer(generated_answer: str) -> str | None:
+    """
+    Extracts the final numeric answer from a generated string.
+    Looks for "#### <number>" pattern, otherwise tries to find the last number.
+    """
+    if generated_answer is None:
+        return None
+
+    # Pre-normalize by removing commas to help regex correctly identify numbers like "1,234" as "1234"
+    processed_answer = str(generated_answer).replace(",", "")
+
+    # Try to find "#### <number>"
+    match = re.search(r"####\s*([+-]?\d*\.?\d+)", processed_answer)
+    if match:
+        return normalize_answer(match.group(1)) # normalize_answer will handle other chars like $ and whitespace
+
+    # If no "#### " marker, try to find the last number in the string
+    all_numbers = re.findall(r"([+-]?\d*\.?\d+)", processed_answer)
+    if all_numbers:
+        return normalize_answer(all_numbers[-1]) # normalize_answer here too
+
+    # Fallback: if no numbers found by regex, normalize the (comma-removed) string.
+    # This might be useful if the answer is just "123" without any markers or surrounding text.
+    # However, if it's "abc", it will return "abc". This is acceptable as it won't match a numeric gold.
+    return normalize_answer(processed_answer)
+
+def score_gsm8k_exact_match(generated_answer: str, gold_answer: str) -> bool:
+    """
+    Scores a generated answer against a gold answer for exact match after normalization.
+    Gold answer is assumed to be a clean numeric string.
+    """
+    extracted_gen = extract_final_answer(generated_answer)
+    normalized_gold = normalize_answer(gold_answer)
+
+    if extracted_gen is None:
+        return False
+
+    # Handle cases where answers might be like ".5" vs "0.5"
+    try:
+        if float(extracted_gen) == float(normalized_gold):
+            return True
+    except ValueError:
+        # If conversion to float fails, fall back to string comparison
+        pass
+
+    return extracted_gen == normalized_gold
+
+
+# --- Main Scorer Logic ---
 def main():
     parser = argparse.ArgumentParser(description="Evaluate GSM8K outputs for exact match and generate a CSV.")
     parser.add_argument(
@@ -32,34 +97,198 @@ def main():
         print(f"Error: Could not decode JSON from {args.input_file}.")
         return
 
-    csv_header = ["item_id", "plain_correct", "creative_correct"]
+    csv_header = ["item_id", "plain_response", "plain_gold_answer", "plain_extracted_llm_ans", "plain_correct",
+                  "creative_response", "creative_gold_answer", "creative_extracted_llm_ans", "creative_correct"]
 
     with open(args.output_file, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(csv_header)
 
+        total_plain_correct = 0
+        total_creative_correct = 0
+        total_valid_items = 0
+
         for item in data:
             item_id = item.get("item_id", "unknown_id")
-            if item.get("error"):
-                print(f"Skipping item {item_id} due to generation error: {item['error']}")
-                writer.writerow([item_id, "ERROR", "ERROR"])
+
+            if item.get("error_plain") or item.get("error_creative") or item.get("error"): # Check for various error flags
+                # Determine specific error states for CSV logging if necessary
+                plain_status = "ERROR" if item.get("error_plain") or item.get("error") else item.get("plain_response", "")
+                creative_status = "ERROR" if item.get("error_creative") or item.get("error") else item.get("creative_response", "")
+                writer.writerow([item_id,
+                                 plain_status, "N/A", "N/A", "ERROR",
+                                 creative_status, "N/A", "N/A", "ERROR"])
+                if item.get("error_plain") or item.get("error"):
+                    print(f"Skipping plain response for item {item_id} due to generation error: {item.get('error_plain') or item.get('error')}")
+                if item.get("error_creative") or item.get("error"):
+                     print(f"Skipping creative response for item {item_id} due to generation error: {item.get('error_creative') or item.get('error')}")
                 continue
 
-            # In a real scenario, you'd extract the gold answer:
-            # gold_answer = item.get("original_item_dict", {}).get("answer")
-            # And compare item.get("plain_response") and item.get("creative_response") with gold_answer.
+            # Extract gold answer - assuming it's clean and numeric from the source.
+            # The official GSM8K dataset usually has the final answer after "#### ".
+            # We need to ensure `gold_answer_raw` is the string containing "#### <number>" or just "<number>"
+            gold_answer_raw = item.get("original_item_dict", {}).get("answer", "")
+            if not gold_answer_raw:
+                print(f"Warning: Missing gold answer for item {item_id}. Skipping.")
+                writer.writerow([item_id,
+                                 item.get("plain_response",""), "MISSING_GOLD", "N/A", "ERROR",
+                                 item.get("creative_response",""), "MISSING_GOLD", "N/A", "ERROR"])
+                continue
 
-            # Dummy scoring logic
-            plain_correct = random.randint(0, 1)
-            creative_correct = random.randint(0, 1)
+            # The gold answer from dataset often has "#### number", so extract it.
+            gold_answer_numeric = extract_final_answer(str(gold_answer_raw))
+            if gold_answer_numeric is None: # Should not happen if gold_answer_raw is valid
+                print(f"Warning: Could not extract numeric part from gold answer '{gold_answer_raw}' for item {item_id}. Skipping.")
+                writer.writerow([item_id,
+                                 item.get("plain_response",""), str(gold_answer_raw), "N/A", "ERROR",
+                                 item.get("creative_response",""), str(gold_answer_raw), "N/A", "ERROR"])
+                continue
+
+
+            total_valid_items +=1 # Counting items with valid gold answers for accuracy calculation
+
+            plain_response = item.get("plain_response", "")
+            plain_extracted_llm_ans = extract_final_answer(plain_response)
+            plain_correct = 1 if score_gsm8k_exact_match(plain_response, gold_answer_numeric) else 0
+            if plain_correct == 1:
+                total_plain_correct += 1
+
+            creative_response = item.get("creative_response", "")
+            creative_extracted_llm_ans = extract_final_answer(creative_response)
+            creative_correct = 1 if score_gsm8k_exact_match(creative_response, gold_answer_numeric) else 0
+            if creative_correct == 1:
+                total_creative_correct += 1
 
             writer.writerow([
                 item_id,
+                plain_response,
+                gold_answer_numeric, # Log the extracted gold numeric part
+                plain_extracted_llm_ans,
                 plain_correct,
+                creative_response,
+                gold_answer_numeric, # Log the extracted gold numeric part
+                creative_extracted_llm_ans,
                 creative_correct
             ])
 
+        if total_valid_items > 0:
+            plain_accuracy = (total_plain_correct / total_valid_items) * 100
+            creative_accuracy = (total_creative_correct / total_valid_items) * 100
+            print(f"\nOverall Plain Accuracy: {plain_accuracy:.2f}% ({total_plain_correct}/{total_valid_items})")
+            print(f"Overall Creative Accuracy: {creative_accuracy:.2f}% ({total_creative_correct}/{total_valid_items})")
+        else:
+            print("\nNo valid items found to calculate accuracy.")
+
+
     print(f"Successfully generated GSM8K scores to {args.output_file}")
 
+# --- Test Cases ---
+def run_tests():
+    print("--- Running GSM8K Exact Match Tests ---")
+
+    test_cases = [
+        # (generated_answer, gold_answer, expected_result)
+        ("#### 123", "123", True),
+        ("The final answer is #### 123.", "123", True),
+        ("The final answer is 123.", "123", True),
+        ("123", "123", True),
+        ("   123   ", "123", True),
+        ("#### 123.00", "123", True),
+        ("Answer: 123.0", "123", True),
+        ("123.0", "123", True),
+        ("The number is 1,234", "1234", True),
+        ("#### $1,234", "1234", True),
+        ("The answer is 1234.", "1234", True),
+        ("It is 1234", "1234", True),
+
+        ("#### 456", "123", False),
+        ("The final answer is 456.", "123", False),
+        ("123.45", "123", False),
+        ("The answer is 123 dogs.", "123", True), # "dogs" should be handled by normalize_answer if it's just a number
+        ("123 dogs", "123", True),
+        ("The answer is 123 cats and 456 dogs. The final number is 123.", "123", True),
+
+
+        # Edge cases for extraction
+        ("The price is $50. Half of that is $25.", "25", True),
+        ("She had 10 apples and gave away 3. So she has 7 left.", "7", True),
+        ("No explicit number here.", "100", False), # Should not match if gen has no number
+        ("", "100", False), # Empty generated
+        ("#### ", "100", False), # Marker but no number
+        ("The answer is fifty.", "50", False), # Word vs number - current logic won't handle this
+        ("123.000", "123", True),
+        ("0.5", "0.5", True),
+        (".5", "0.5", True),
+        ("0.50", "0.5", True),
+        ("#### 0.5", "0.5", True),
+        ("#### .5", "0.5", True),
+        ("#### 1,234.56", "1234.56", True),
+        ("The answer is 1,234.56 dollars", "1234.56", True),
+        ("final answer is 34, so the result is 34", "34", True),
+        ("The final answer is 123\n", "123", True),
+        ("The final answer is\n123", "123", True),
+        ("My final answer is 123.", "123", True),
+        ("The final answer is 123. So this is the answer.", "123", True),
+    ]
+
+    passed_count = 0
+    for i, (gen, gold, expected) in enumerate(test_cases):
+        result = score_gsm8k_exact_match(gen, gold)
+        is_correct = result == expected
+        if is_correct:
+            passed_count += 1
+        print(
+            f"Test Case {i+1}: score_gsm8k_exact_match('{gen}', '{gold}')\n"
+            f"  -> Expected: {expected}, Got: {result} {'[PASS]' if is_correct else '[FAIL]'}"
+        )
+        if not is_correct:
+             print(f"    Extracted Gen: '{extract_final_answer(gen)}', Normalized Gold: '{normalize_answer(gold)}'")
+
+
+    print(f"\n--- {passed_count}/{len(test_cases)} test cases passed. ---")
+
+    # Example of how main() would be used if not running via command line
+    # This is a conceptual test for the flow, actual file processing is via CLI args
+    print("\n--- Conceptual Test for main() data processing (not file I/O) ---")
+    sample_data_for_main = [
+        {
+            "item_id": "gsm_001",
+            "original_item_dict": {"answer": "#### 100"},
+            "plain_response": "The answer is #### 100.",
+            "creative_response": "I think it's 100."
+        },
+        {
+            "item_id": "gsm_002",
+            "original_item_dict": {"answer": "50"}, # Gold can also be just number
+            "plain_response": "Result: 50 dogs",
+            "creative_response": "#### 51"
+        },
+        {
+            "item_id": "gsm_003", # Error case
+            "error_plain": True,
+            "original_item_dict": {"answer": "20"},
+            "plain_response": "", # Error, so no response
+            "creative_response": "It is 20"
+        },
+         {
+            "item_id": "gsm_004", # Missing gold
+            "original_item_dict": {}, # Missing "answer"
+            "plain_response": "It is 30",
+            "creative_response": "It is 30 also"
+        }
+    ]
+    # To truly test main(), we'd need to write sample_data_for_main to a temp JSON
+    # and then call main() with args pointing to this temp JSON and a temp output CSV.
+    # For this subtask, the unit tests for score_gsm8k_exact_match are the primary focus for local testing.
+    print("Conceptual test: The main() function would process data like the sample above.")
+    print("It would call score_gsm8k_exact_match for plain and creative responses and use extracted gold answers.")
+    print("Results would be written to a CSV and overall accuracy printed.")
+
+
 if __name__ == '__main__':
+    # When invoked as a script, run the main logic.
+    # run_tests() is useful for direct testing of functions.
     main()
+    # To run local tests for the functions:
+    # print("--- Running local tests for gsm8k functions (call run_tests() directly if needed) ---")
+    # run_tests()
