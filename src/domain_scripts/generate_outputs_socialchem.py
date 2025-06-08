@@ -2,7 +2,8 @@ import argparse
 import json
 import os
 import sys
-
+from dotenv import load_dotenv
+load_dotenv() 
 try:
     # Assuming scripts are run from the repository root or src is in PYTHONPATH
     from src.utils.llm_handler import generate_prompt, get_llm_response
@@ -14,7 +15,7 @@ except ImportError:
         print("Error: llm_handler.py not found. Ensure 'src' is in PYTHONPATH or run from the repository root.")
         sys.exit(1)
 
-SUPPORTED_MODELS = ["gpt-4o", "claude-3-5-sonnet-20240620", "deepseek-ai/deepseek-r1"]
+SUPPORTED_MODELS = ["o3", "claude-3-5-sonnet-20240620", "deepseek-ai/deepseek-r1"]
 DOMAIN_NAME = "SocialChem"
 
 def main():
@@ -69,7 +70,7 @@ def main():
     for index, item in enumerate(items_to_process):
         item_id = f"{DOMAIN_NAME.lower()}_item_{index}" # Default item_id
         # SocialChem uses 'question' based on the provided `socialchem_sampled_30.jsonl`
-        if 'question' not in item:
+        if 'situation' not in item:
             print(f"  Skipping item index {index} due to missing 'question' field: {item}")
             results.append({
                 "item_id": item_id,
@@ -80,7 +81,7 @@ def main():
             })
             continue
 
-        item_text = item['question']
+        item_text = item['situation']
         print(f"Processing item {index + 1} of {total_items_to_process}: (ID: {item_id}) '{item_text[:100]}...'")
 
         try:

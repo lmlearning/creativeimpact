@@ -1,4 +1,5 @@
 import os
+
 try:
     import replicate # Added for DeepSeek R1
 except ImportError:
@@ -41,7 +42,7 @@ def generate_prompt(item_text: str, domain: str, prompt_type: str) -> str:
         elif domain == "SocialChem":
             creative_modifier = "creative and "
     if domain == "AUT":
-        prompt = f"List three {creative_modifier}uses for a {item_text}."
+        prompt = f"List as many {creative_modifier}uses for a {item_text} as possible. Answer with a comma separated list with no explanation."
     elif domain == "TruthfulQA":
         if prompt_type == "creative":
              prompt = f"Question: {item_text}\n{creative_modifier}Answer:"
@@ -53,7 +54,7 @@ def generate_prompt(item_text: str, domain: str, prompt_type: str) -> str:
         else:
             prompt = f"Solve the following math problem:\n{item_text}\nStep-by-step solution:"
     elif domain == "SocialChem":
-        prompt = f"What is a {creative_modifier}socially acceptable way to respond to the following situation?\nSituation: {item_text}\nResponse:"
+        prompt = f"What is a {creative_modifier}socially acceptable rule of thumb for this situation. Answer with a single sentence.?\nSituation: {item_text}\nResponse:"
     else:
         raise ValueError(f"Unknown domain: {domain}")
     return prompt.strip()
@@ -69,7 +70,7 @@ def get_llm_response(prompt: str, model_name: str, api_keys: dict = None):
     if api_keys is None:
         api_keys = {}
 
-    if model_name == "deepseek r1": # Changed to "deepseek r1"
+    if model_name == "deepseek-ai/deepseek-r1": # Changed to "deepseek r1"
         print(f"Using Replicate for {model_name}")
         # The replicate client automatically uses REPLICATE_API_TOKEN env var.
         # No need to check api_keys dict for 'replicate' as per standard usage.
@@ -102,12 +103,12 @@ def get_llm_response(prompt: str, model_name: str, api_keys: dict = None):
 
         try:
             client = OpenAI(api_key=api_key)
+
             chat_completion = client.chat.completions.create(
-                model="gpt-4o",  # Actual model identifier for OpenAI
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=1024 # Adjust as needed
+                model="o3",                           # OpenAI’s full-scale reasoning model
+                messages=[{"role": "user", "content": prompt}],
+                max_completion_tokens=1024,           # reasoning models require this param
+                reasoning_effort="medium"             # low | medium | high
             )
             response_text = chat_completion.choices[0].message.content
             return response_text.strip()

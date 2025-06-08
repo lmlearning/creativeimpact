@@ -2,7 +2,9 @@ import argparse
 import json
 import os
 import sys
+from dotenv import load_dotenv
 
+load_dotenv()
 try:
     # Assuming scripts are run from the repository root or src is in PYTHONPATH
     from src.utils.llm_handler import generate_prompt, get_llm_response
@@ -17,7 +19,7 @@ except ImportError:
         print("Error: llm_handler.py not found. Ensure 'src' is in PYTHONPATH or run from the repository root.")
         sys.exit(1)
 
-SUPPORTED_MODELS = ["gpt-4o", "claude-3-5-sonnet-20240620", "deepseek-ai/deepseek-r1"]
+SUPPORTED_MODELS = ["o3", "claude-3-5-sonnet-20240620", "deepseek-ai/deepseek-r1"]
 
 def main():
     parser = argparse.ArgumentParser(description="Generate LLM outputs for AUT (Alternate Uses Task) items.")

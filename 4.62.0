@@ -1,0 +1,2 @@
+Requirement already satisfied: tqdm in c:\users\lama\.conda\envs\tqa_official\lib\site-packages (4.67.1)
+Requirement already satisfied: colorama in c:\users\lama\.conda\envs\tqa_official\lib\site-packages (from tqdm) (0.4.6)

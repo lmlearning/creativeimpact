@@ -1,99 +1,103 @@
-# LLM Finetuning Project
+# Creative Impact of Language Models
 
-This project is designed to streamline the process of fine-tuning Large Language Models (LLMs) using various datasets and configurations. It provides a structured framework for data preprocessing, model training, evaluation, and deployment.
-
-## Project Structure
-
-```
-├── data/                     # Raw and processed datasets
-├── outputs/                  # Model checkpoints, logs, and other training outputs
-├── results/                  # Evaluation results and reports
-├── src/                      # Source code
-│   ├── domain_scripts/       # Scripts specific to a particular domain or dataset
-│   ├── utils/                # Utility functions for data processing, model loading, etc.
-│   ├── preprocess.py         # Data preprocessing scripts
-│   ├── train.py              # Model training scripts
-│   ├── evaluate.py           # Model evaluation scripts
-│   └── predict.py            # Scripts for making predictions with a trained model
-├── requirements.txt          # Python dependencies
-├── .gitignore                # Files and directories to be ignored by Git
-└── README.md                 # Project overview and instructions
-```
+This repository contains code to evaluate the "creative impact" of language models across a variety of tasks. The framework is designed to be extensible to new models, datasets, and evaluation metrics.
 
 ## Setup
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/your-username/llm-finetuning.git
-   cd llm-finetuning
-   ```
+1.  **Install dependencies:**
+    It is recommended to use a virtual environment.
+    ```bash
+    python -m venv venv
+    source venv/bin/activate
+    pip install -r requirements.txt
+    ```
 
-2. **Create a virtual environment (recommended):**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
-   ```
+2.  **Download datasets:**
+    The setup scripts will download the necessary datasets.
+    ```bash
+    python src/domain_scripts/aut_setup.py
+    python src/domain_scripts/gsm8k_setup.py
+    python src/domain_scripts/socialchem_setup.py
+    python src/domain_scripts/truthfulqa_setup.py
+    ```
 
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+## Running Experiments
 
-## Usage
+The main script to run all experiments is `run_experiments.sh`. You can specify a model to use. The default is `google/flan-t5-large`.
 
-### 1. Data Preprocessing
+```bash
+bash run_experiments.sh --model_name google/flan-t5-base
+```
 
-- Place your raw data in the `data/` directory.
-- Implement your data preprocessing logic in `src/preprocess.py` or create domain-specific scripts in `src/domain_scripts/`.
-- Run the preprocessing script:
-  ```bash
-  python src/preprocess.py --data_path data/your_raw_data.csv --output_path data/processed_data.json
-  ```
-  *(Adjust arguments as needed)*
+This will:
+1.  Generate model outputs for each task and save them to the `outputs/` directory.
+2.  Evaluate the generated outputs using the corresponding scorer.
+3.  Print the evaluation scores to the console.
 
-### 2. Model Training
+### Individual Tasks
 
-- Configure your training parameters in `src/train.py` or a separate configuration file.
-- Run the training script:
-  ```bash
-  python src/train.py --config config/training_config.yaml
-  ```
-  *(Adjust arguments and config file path as needed)*
-- Model checkpoints and logs will be saved in the `outputs/` directory.
+You can also run generation and evaluation for each task individually.
 
-### 3. Model Evaluation
+#### 1. Alternate Uses Test (AUT) - Divergent Thinking
 
-- Implement evaluation metrics and logic in `src/evaluate.py`.
-- Run the evaluation script:
-  ```bash
-  python src/evaluate.py --model_path outputs/your_model_checkpoint --data_path data/test_data.json --results_path results/evaluation_summary.txt
-  ```
-  *(Adjust arguments as needed)*
+This task evaluates a model's ability to come up with creative, alternative uses for common objects.
 
-### 4. Prediction
+* **Generate:**
+    ```bash
+    python src/domain_scripts/generate_outputs_aut.py --model_name <your_model> --output_file outputs/aut_outputs.jsonl
+    ```
+* **Evaluate:** The score is the average number of unique uses generated per object.
+    ```bash
+    python src/evaluate.py --domain aut --input_file outputs/aut_outputs.jsonl
+    ```
 
-- Use `src/predict.py` to make predictions with your fine-tuned model.
-- Example:
-  ```bash
-  python src/predict.py --model_path outputs/your_model_checkpoint --input_text "Translate this English text to French: Hello, world!"
-  ```
+#### 2. GSM8K - Mathematical Reasoning
 
-## Customization
+This task tests grade-school mathematical reasoning.
 
-- **Adding new models:** Modify `src/train.py` and potentially `src/utils/model_utils.py` to support new LLM architectures.
-- **Adding new datasets:** Create new preprocessing scripts in `src/domain_scripts/` or update `src/preprocess.py`.
-- **Changing hyperparameters:** Adjust configuration files or command-line arguments for `src/train.py`.
+* **Generate:**
+    ```bash
+    python src/domain_scripts/generate_outputs_gsm8k.py --model_name <your_model> --output_file outputs/gsm8k_outputs.jsonl
+    ```
+* **Evaluate:** The score is the exact match accuracy on the final numerical answer.
+    ```bash
+    python src/evaluate.py --domain gsm8k --input_file outputs/gsm8k_outputs.jsonl
+    ```
 
-## Contributing
+#### 3. SocialChem 101 - Social Norms
 
-Contributions are welcome! Please follow these steps:
-1. Fork the repository.
-2. Create a new branch (`git checkout -b feature/your-feature-name`).
-3. Make your changes.
-4. Commit your changes (`git commit -m 'Add some feature'`).
-5. Push to the branch (`git push origin feature/your-feature-name`).
-6. Open a Pull Request.
+This task evaluates the model's understanding of basic social norms.
 
-## License
+* **Generate:**
+    ```bash
+    python src/domain_scripts/generate_outputs_socialchem.py --model_name <your_model> --output_file outputs/socialchem_outputs.jsonl
+    ```
+* **Evaluate:** The score is the classification accuracy.
+    ```bash
+    python src/evaluate.py --domain social --input_file outputs/socialchem_outputs.jsonl
+    ```
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+#### 4. TruthfulQA - Truthfulness
+
+This task measures whether a language model is truthful in generating answers to questions.
+
+* **Generate:**
+    ```bash
+    python src/domain_scripts/generate_outputs_truthfulqa.py --model_name <your_model> --output_file outputs/truthfulqa_outputs.jsonl
+    ```
+* **Evaluate:** Uses the official TruthfulQA metrics (BLEU, ROUGE, etc.) to compare generated answers against known correct and incorrect answers.
+    ```bash
+    python src/evaluate.py --domain truthfulqa --input_file outputs/truthfulqa_outputs.jsonl --questions_file data/TruthfulQA.csv
+    ```
+
+## Project Structure
+
+-   `data/`: Stores downloaded datasets.
+-   `outputs/`: Default directory for model-generated outputs.
+-   `src/`: Main source code.
+    -   `domain_scripts/`: Scripts for data setup and model output generation for each task.
+    -   `eval_scorers/`: Evaluation scripts for each task.
+    -   `utils/`: Utility functions, including the LLM handler.
+-   `run_experiments.sh`: Main script to run all experiments.
+-   `evaluate.py`: Main script to run evaluation on generated outputs.
+-   `predict.py`: Script for generating a prediction for a single input.

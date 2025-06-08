@@ -12,3 +12,15 @@ transformers
 accelerate
 torch
 openai
+absl-py
+datasets
+pandas
+tqdm
+scikit-learn
+torch
+transformers
+evaluate
+bert_score
+bleurt @ git+https://github.com/google-research/bleurt.git
+sentence-transformers
+scipy
